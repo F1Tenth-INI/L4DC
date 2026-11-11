@@ -24,6 +24,9 @@ To change what runs, edit [settings/settings.yml](settings/settings.yml) and sta
 
 Results (lap times, crashes, settings) are saved in `results/`.
 
+Over ssh there is no screen for the window: connect with X forwarding (`ssh -X user@host`; macOS needs
+XQuartz, Windows an X server such as VcXsrv or MobaXterm), or set `render: false` and read the lap times.
+
 ## Setup
 
 Python 3.11:

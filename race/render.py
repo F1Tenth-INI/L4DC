@@ -26,6 +26,18 @@ TEXT = (255, 255, 255)
 SPEED_STOPS = np.array(((0, 190, 0), (240, 220, 0), (255, 140, 0), (210, 30, 20)), dtype=np.float64)
 FPS = 60.0
 
+NO_DISPLAY_HELP = """No display found (e.g. logged in over ssh), so no window can be shown. The run continues without it.
+To see the window: connect with X forwarding, `ssh -X user@host` (macOS needs XQuartz, Windows an X server
+such as VcXsrv or MobaXterm), or run on a computer with a screen. Set `render: false` to hide this message."""
+
+
+def display_available() -> bool:
+    """True if pygame can open a real window (not just its invisible offscreen fallback)."""
+    pygame.display.init()
+    available = pygame.display.get_driver() not in ("offscreen", "dummy")
+    pygame.display.quit()
+    return available
+
 
 class Viewer:
     def __init__(self, track, title: str):

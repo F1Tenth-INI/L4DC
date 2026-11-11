@@ -66,8 +66,11 @@ class Simulation:
         self.lap_timer = LapTimer(len(self.track.waypoints), self._lap_complete)
         self.viewer = None
         if sim.render:
-            from race.render import Viewer
-            self.viewer = Viewer(self.track, f"{self.controller_name} on {sim.map}")
+            from race.render import NO_DISPLAY_HELP, Viewer, display_available
+            if display_available():
+                self.viewer = Viewer(self.track, f"{self.controller_name} on {sim.map}")
+            else:
+                print(NO_DISPLAY_HELP, flush=True)
 
         self.time = 0.0  # simulated time [s]
         self.clock = 0.0  # lap-timer clock, advanced once per control step
