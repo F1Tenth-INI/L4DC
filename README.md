@@ -1,8 +1,13 @@
 # Auto-Tuning MPPI for Autonomous Racing
 
-Simulation code for the paper *Auto-Tuning MPPI for Autonomous Racing* (Bolli, Ferraro, Delbrück).
-It contains the proposed controller (Auto-Tuning MPPI), the MPPI baseline it is compared with, the car
-simulator and the four tracks of the experiments.
+A small simulator for a 1:10 scale race car (F1TENTH), with two controllers that drive it around a track:
+
+- **MPPI**, a standard sampling-based controller, as the baseline.
+- **Auto-Tuning MPPI**, which remembers what worked at each point of the track and improves it while it
+  drives, so it gets faster lap after lap with only 50 samples per step.
+
+This is the code of the paper *Auto-Tuning MPPI for Autonomous Racing* (Bolli, Ferraro, Delbrück), but you
+don't need the paper to use it.
 
 ## Quick start
 
@@ -14,80 +19,85 @@ pip install -r requirements.txt
 python run.py
 ```
 
-A window opens and Auto-Tuning MPPI drives icra2022; lap times appear in the terminal.
+A window opens and Auto-Tuning MPPI drives the `icra2022` track. Every lap time is printed in the terminal,
+and at the end all lap times and crashes are saved to `results/`.
+
 To change what runs, edit [settings/settings.yml](settings/settings.yml) and start `python run.py` again:
 
-- MPPI instead: `controller: mppi` (number of rollouts: `mppi.rollouts`)
-- another track: `simulation.map: RCA1` (or `IPZ50`, `hangar3`), centre line: `simulation.waypoints: midline`
-- friction, noise, seed, run length: `simulation.friction`, `state_noise`, `seed`, `duration`
-- no window, as fast as possible: `simulation.render: false`
+| to | set |
+|---|---|
+| drive with the MPPI baseline | `controller: mppi` (samples per step: `mppi.rollouts`) |
+| use another track | `simulation.map: RCA1` (or `IPZ50`, `hangar3`) |
+| follow the track centre instead of the racing line | `simulation.waypoints: midline` |
+| change grip, sensor noise, random seed, run length | `simulation.friction`, `state_noise`, `seed`, `duration` |
+| run without a window, as fast as possible | `simulation.render: false` |
 
-Results (lap times, crashes, settings) are saved in `results/`.
+You can also pass another settings file: `python run.py my_settings.yml`.
 
-Over ssh there is no screen for the window: connect with X forwarding (`ssh -X user@host`; macOS needs
-XQuartz, Windows an X server such as VcXsrv or MobaXterm), or set `render: false` and read the lap times.
+Everything runs on the CPU.
 
-## Setup
+## How it works
 
-Python 3.11:
+**The simulation.** The car is a single-track model with Pacejka tires, simulated in steps of 0.01 s
+([race/dynamics.py](race/dynamics.py)). The car parameters are in
+[settings/car_parameters.yml](settings/car_parameters.yml). The controller picks a steering angle and an
+acceleration every 0.04 s, and each command reaches the car 0.08 s later, like on the real car. Optionally,
+random noise is added to everything the controller observes. If a corner of the car touches a wall, that
+counts as a crash: the car restarts from rest at a random point of the track, and the lap timer starts over.
 
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
+Each track ([maps/](maps/)) comes with a racing line and a centre line, each a list of points with a target
+speed. Both controllers use one of them as their guide.
 
-Everything runs on the CPU. For a smaller download, install the CPU build of torch first:
-`pip install torch --index-url https://download.pytorch.org/whl/cpu`.
+**MPPI (baseline).** At every step MPPI tries many random command sequences (for example 2000). It predicts
+1.4 s of driving for each with the car model and scores it: stay near the racing line, point along it, make
+progress, keep off the walls. Then it averages the sequences, giving the better ones more weight, applies the
+first command, and starts over at the next step. With few samples (for example 50) the plans get much
+worse.
 
-## Run
+**Auto-Tuning MPPI.** Works like MPPI, but keeps a memory along the track. For each point of the guide line, the
+memory stores how the car should pass there (position, heading, speed, sideways slide) and the command
+sequence that gets it there. The memory starts slow, at 1.5 m/s. Then, at every step:
 
-```bash
-python run.py
-```
+1. Sampling starts from the commands stored for the car's position, so 50 samples are enough to drive well.
+2. Behind the car (20 points back, where it is known how the car actually drove), it tries small changes of the
+   stored commands in simulation. If a change is faster, keeps enough distance to the walls and still connects to
+   the rest of the memory, it replaces the stored entry.
+3. If the car leaves its corridor or crashes, the latest changes around that place are undone.
+4. If the best lap has not improved for 5 laps, it goes back to the memory of its best lap and finally stops
+   changing it ("frozen").
 
-All settings are in [settings/settings.yml](settings/settings.yml):
+So the car learns its own speed profile and line by driving.
 
-- `controller`: `atmppi` (Auto-Tuning MPPI) or `mppi` (baseline)
-- `simulation`: track, raceline or midline, friction, observation noise, seed, duration, window on/off
-- `mppi`: number of rollouts
-- `atmppi`: the parameters of the paper's Table 1, set to the tuned values. The symbol of each is in the comment.
+The settings of Auto-Tuning MPPI are in the `atmppi` section of [settings/settings.yml](settings/settings.yml),
+already set to tuned values. Each has a short comment; the symbol in brackets is the one used in the paper.
 
-The car is described in [settings/car_parameters.yml](settings/car_parameters.yml); `simulation.friction`
-replaces its friction coefficient. Both controllers predict with the same car parameters as the simulator.
+## The window
 
-A run prints every lap time and writes them, the crashes and the settings to `results/<date>_<controller>_<map>_seed<k>.json`.
-Laps after the memory froze are marked `"frozen": true`.
+With `render: true` a pygame window shows the run. Mouse wheel: zoom, drag: pan, F: follow the car, Esc: stop.
 
-### Viewer
+- **Auto-Tuning MPPI:** each arrow is one entry of the memory. It points in the stored heading, and its
+  length and color (green = slow, red = fast) show the stored speed. A number next to an arrow counts how often
+  the car left the corridor there. The orange line is the plan the car is following.
+- **MPPI:** red dots are some of the sampled predictions, the orange line is the plan, and green dots are the
+  part of the racing line the cost looks at.
 
-With `render: true` a pygame window shows the run (mouse wheel: zoom, drag: pan, F: follow the car, Esc: stop).
-For Auto-Tuning MPPI each waypoint of the memory is an arrow along its stored heading, 0.08 m long per m/s of
-stored speed and colored from green (slow) to red; a number marks how often the car left the corridor there.
-The orange line is the executed plan. For MPPI, red dots are 20 of its rollouts, the orange line its plan and
-the green dots the waypoints its cost uses. `speed` caps the simulation at a multiple of real time while the
-window is open; without the window it runs as fast as it can.
+`speed` limits the simulation to that multiple of real time while the window is open.
 
-### Paper experiments
+**Over ssh** there is no screen, so the run continues without a window. To see it, connect with X forwarding
+(`ssh -X user@host`; macOS needs XQuartz, Windows an X server such as VcXsrv or MobaXterm), or set
+`render: false`.
 
-- Lap times on icra2022: `map: icra2022`, `waypoints: raceline`, `friction: 0.5`, `state_noise: 0.0`, `seed: 1`,
-  once with `controller: atmppi` (50 rollouts) and once with `controller: mppi` (2000 rollouts).
-- All tracks: every combination of the four maps, `raceline` / `midline` and friction 0.5 / 0.9, with
-  `state_noise: 0.025`, 1000 s per run and several seeds; Auto-Tuning MPPI with 50 rollouts, MPPI with 50 and 2000.
+## Results
 
-## Tracks
+Each run writes `results/<date>_<controller>_<map>_seed<k>.json` with every lap time, the crash times and the
+settings used. Laps driven after the memory froze are marked `"frozen": true`.
 
-`icra2022`, `RCA1`, `IPZ50` and `hangar3`. Each folder in [maps/](maps/) holds the occupancy image and its `.yaml`, the minimum-curvature raceline
-(`<map>_wp.csv`) and the track centre (`centerline.csv`). Every 4th point is used as a waypoint. On the
-midline, and before the first lap of Auto-Tuning MPPI, the target speed is 1.5 m/s.
+To repeat the paper's experiments:
 
-## Simulation
-
-- Single-track Pacejka tire model blended with a kinematic model below about 1.75 m/s, Euler steps of 0.01 s
-  ([race/dynamics.py](race/dynamics.py)).
-- Control period 0.04 s, commands reach the car 0.08 s later.
-- Optional uniform noise on every observed state variable (`state_noise`).
-- A crash is a body corner within 5 mm of a wall. The car then restarts from rest near a random waypoint, and
-  the lap timer starts over. The car also starts the run at a random waypoint (seeded).
+- **Lap times on icra2022:** `map: icra2022`, `waypoints: raceline`, `friction: 0.5`, `state_noise: 0.0`,
+  `seed: 1`. Run it once with `controller: atmppi` and once with `controller: mppi` (2000 rollouts).
+- **All tracks:** every combination of the four maps, `raceline` / `midline` and friction 0.5 / 0.9, with
+  `state_noise: 0.025`, `duration: 1000` and several seeds. Auto-Tuning MPPI uses 50 rollouts, MPPI 50 and 2000.
 
 ## Code
 
@@ -95,10 +105,10 @@ midline, and before the first lap of Auto-Tuning MPPI, the target speed is 1.5 m
 |---|---|
 | [run.py](run.py) | entry point |
 | [race/simulation.py](race/simulation.py) | simulation loop, crashes, lap times, results |
-| [race/track.py](race/track.py) | map, waypoints, lap timer, collision check |
+| [race/track.py](race/track.py) | map, guide lines, lap timer, collision check |
 | [race/dynamics.py](race/dynamics.py) | car model (JAX) |
-| [race/controllers/atmppi.py](race/controllers/atmppi.py) | Auto-Tuning MPPI; the docstring maps the paper's sections to the code |
-| [race/controllers/drive_costs_jax.py](race/controllers/drive_costs_jax.py) | its driving cost |
-| [race/controllers/walls.py](race/controllers/walls.py) | its wall distances and free-space paths |
 | [race/controllers/mppi.py](race/controllers/mppi.py) | MPPI baseline |
-| [race/render.py](race/render.py) | pygame viewer |
+| [race/controllers/atmppi.py](race/controllers/atmppi.py) | Auto-Tuning MPPI. Its docstring maps the paper's sections to the code |
+| [race/controllers/drive_costs_jax.py](race/controllers/drive_costs_jax.py) | its driving cost |
+| [race/controllers/walls.py](race/controllers/walls.py) | its wall distances |
+| [race/render.py](race/render.py) | pygame window |
