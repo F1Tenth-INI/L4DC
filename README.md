@@ -4,6 +4,26 @@ Simulation code for the paper *Auto-Tuning MPPI for Autonomous Racing* (Bolli, F
 It contains the proposed controller (Auto-Tuning MPPI), the MPPI baseline it is compared with, the car
 simulator and the four tracks of the experiments.
 
+## Quick start
+
+```bash
+git clone https://github.com/F1Tenth-INI/L4DC.git && cd L4DC
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # optional: smaller CPU-only torch
+pip install -r requirements.txt
+python run.py
+```
+
+A window opens and Auto-Tuning MPPI drives icra2022; lap times appear in the terminal.
+To change what runs, edit [settings/settings.yml](settings/settings.yml) and start `python run.py` again:
+
+- MPPI instead: `controller: mppi` (number of rollouts: `mppi.rollouts`)
+- another track: `simulation.map: RCA1` (or `IPZ50`, `hangar3`), centre line: `simulation.waypoints: midline`
+- friction, noise, seed, run length: `simulation.friction`, `state_noise`, `seed`, `duration`
+- no window, as fast as possible: `simulation.render: false`
+
+Results (lap times, crashes, settings) are saved in `results/`.
+
 ## Setup
 
 Python 3.11:
