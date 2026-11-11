@@ -162,25 +162,37 @@ class Viewer:
         part = self.map_surface.subsurface(pygame.Rect(c0, r0, c1 - c0, r1 - r0))
         return pygame.transform.smoothscale(part, size), position
 
-    # Shapes are anti-aliased polygons (gfxdraw); off-screen ones are skipped.
-    def _visible(self, pts, margin: float = 20.0) -> bool:
-        return (pts[:, 0].max() >= -margin and pts[:, 0].min() < self.width + margin
-                and pts[:, 1].max() >= -margin and pts[:, 1].min() < self.height + margin)
+    # Shapes are anti-aliased polygons (gfxdraw). Geometry is computed for all shapes at once; off-screen ones
+    # are skipped.
+    def _on_screen(self, polygons, margin: float = 20.0) -> np.ndarray:
+        lo, hi = polygons.min(axis=1), polygons.max(axis=1)
+        return ((hi[:, 0] >= -margin) & (lo[:, 0] < self.width + margin)
+                & (hi[:, 1] >= -margin) & (lo[:, 1] < self.height + margin))
+
+    def _polygons(self, polygons, colors) -> None:
+        """polygons: (n, corners, 2) screen points; colors: one color or (n, 3)."""
+        if len(polygons) == 0:
+            return
+        keep = self._on_screen(polygons)
+        points = np.rint(np.clip(polygons[keep], -COORD_LIMIT, COORD_LIMIT)).astype(int).tolist()
+        if np.ndim(colors) == 1:
+            colors = [tuple(colors)] * len(points)
+        else:
+            colors = [tuple(c) for c in np.asarray(colors)[keep].tolist()]
+        for pts, color in zip(points, colors):
+            gfxdraw.filled_polygon(self.screen, pts, color)
+            gfxdraw.aapolygon(self.screen, pts, color)
+
+    @staticmethod
+    def _quads(a, b, width: float) -> np.ndarray:
+        """Rectangles of the given width [px] along the segments a[i] -> b[i]."""
+        d = b - a
+        n = np.maximum(np.hypot(d[:, 0], d[:, 1]), 1e-9)[:, None]
+        off = np.stack((-d[:, 1], d[:, 0]), axis=1) / n * (width / 2)
+        return np.stack((a + off, b + off, b - off, a - off), axis=1)
 
     def _polygon(self, pts, color) -> None:
-        if not self._visible(pts):
-            return
-        pts = [(int(round(x)), int(round(y))) for x, y in np.clip(pts, -COORD_LIMIT, COORD_LIMIT)]
-        gfxdraw.filled_polygon(self.screen, pts, color)
-        gfxdraw.aapolygon(self.screen, pts, color)
-
-    def _segment(self, a, b, width: float, color) -> None:
-        d = b - a
-        n = np.hypot(*d)
-        if n < 1e-6:
-            return
-        off = np.array([-d[1], d[0]]) / n * (width / 2)
-        self._polygon(np.array([a + off, b + off, b - off, a - off]), color)
+        self._polygons(np.asarray(pts)[None], color)
 
     def _dots(self, xy, color, radius: float) -> None:
         if xy is None or len(xy) == 0:
@@ -196,33 +208,29 @@ class Viewer:
             return
         pts = self._to_screen(xy)
         w = width * UI_SCALE
-        for a, b in zip(pts[:-1], pts[1:]):
-            self._segment(a, b, w, color)
+        self._polygons(self._quads(pts[:-1], pts[1:], w), color)
         r = int(w / 2)
         if r >= 1:  # round joints
-            for x, y in pts[1:-1]:
+            for x, y in pts[1:-1].astype(int).tolist():
                 if 0 <= x < self.width and 0 <= y < self.height:
-                    gfxdraw.filled_circle(self.screen, int(x), int(y), r, color)
+                    gfxdraw.filled_circle(self.screen, x, y, r, color)
 
     def _arrows(self, xy, heading, speed, v_max) -> None:
         """One arrow per memory entry: shaft plus filled head, length 0.08 m per m/s, colored by speed."""
         scale = np.clip(np.abs(speed) / max(v_max, 1e-3), 0.0, 1.0) * (len(SPEED_STOPS) - 1)
         i = np.minimum(scale.astype(np.int64), len(SPEED_STOPS) - 2)
         colors = np.rint(SPEED_STOPS[i] + (SPEED_STOPS[i + 1] - SPEED_STOPS[i]) * (scale - i)[:, None]).astype(int)
-        base = self._to_screen(xy)
-        direction = np.stack((np.cos(heading), -np.sin(heading)), axis=1)  # screen y points down
         length = np.abs(speed) * 0.08 * self.zoom  # px
+        keep = length >= 1.0
+        base, length, colors = self._to_screen(xy)[keep], length[keep, None], colors[keep]
+        d = np.stack((np.cos(heading[keep]), -np.sin(heading[keep])), axis=1)  # screen y points down
+        normal = np.stack((-d[:, 1], d[:, 0]), axis=1)
         shaft_w = float(np.clip(0.012 * self.zoom, 1.2, 4.0)) * UI_SCALE
-        for b, d, l, color in zip(base, direction, length, colors):
-            if l < 1.0:
-                continue
-            color = tuple(int(c) for c in color)
-            head = min(0.4 * l, max(4.0 * shaft_w, 0.25 * l))
-            tip = b + d * l
-            neck = tip - d * head
-            normal = np.array([-d[1], d[0]])
-            self._segment(b, neck + d * 0.5, shaft_w, color)
-            self._polygon(np.array([tip, neck + normal * head * 0.45, neck - normal * head * 0.45]), color)
+        head = np.minimum(0.4 * length, np.maximum(4.0 * shaft_w, 0.25 * length))
+        tip = base + d * length
+        neck = tip - d * head
+        self._polygons(self._quads(base, neck + d * 0.5, shaft_w), colors)
+        self._polygons(np.stack((tip, neck + normal * head * 0.45, neck - normal * head * 0.45), axis=1), colors)
 
     def _car(self, state) -> None:
         from race.state import POSE_THETA_IDX, POSE_X_IDX, POSE_Y_IDX
