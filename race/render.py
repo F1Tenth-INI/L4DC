@@ -33,8 +33,13 @@ such as VcXsrv or MobaXterm), or run on a computer with a screen. Set `render: f
 
 def display_available() -> bool:
     """True if pygame can open a real window (not just its invisible offscreen fallback)."""
-    pygame.display.init()
-    available = pygame.display.get_driver() not in ("offscreen", "dummy")
+    try:
+        pygame.display.init()
+        available = pygame.display.get_driver() not in ("offscreen", "dummy")
+        if available:
+            pygame.display.set_mode((1, 1), pygame.HIDDEN)
+    except pygame.error:  # some SDL versions raise instead of falling back to offscreen
+        available = False
     pygame.display.quit()
     return available
 
