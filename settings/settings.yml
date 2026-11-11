@@ -1,0 +1,53 @@
+# Settings of one simulation run. Edit, then start it with:  python run.py
+# Symbols in [brackets] are the ones of the paper (Table 1).
+
+controller: atmppi          # atmppi: Auto-Tuning MPPI (the proposed method) | mppi: MPPI baseline
+
+simulation:
+  map: icra2022             # icra2022 | RCA1 | IPZ50 | hangar3
+  waypoints: raceline       # raceline (minimum curvature) | midline (track centre)
+  friction: 0.5             # surface friction coefficient mu (paper: 0.5 and 0.9)
+  state_noise: 0.0          # amplitude of uniform noise on every observed state variable (paper: 0 and 0.025)
+  seed: 1                   # random seed (start position, sampling)
+  duration: 600             # simulated seconds
+  timestep_control: 0.04    # [Δt] control period [s]
+  control_delay: 0.08       # [d·Δt] delay until a command reaches the car [s], a multiple of 0.01
+  render: true              # pygame window
+  speed: 10                 # max simulation speed, multiple of real time. null: as fast as possible
+  results_dir: results      # lap times of every run are written here
+
+# Baseline MPPI, with its original cost function.
+mppi:
+  rollouts: 2000            # [K] sampled control sequences per step (paper: 50 and 2000)
+
+# Auto-Tuning MPPI. Defaults are the tuned values (icra2022, 50 rollouts).
+atmppi:
+  rollouts: 50              # [K]   driving samples
+  window_samples: 50        # [K_w] window candidates rolled out per step
+  horizon: 35               # [H]   steps (1.4 s)
+  noise_correlation: 0.8    # [ρ]   temporal correlation of the sampling noise
+  temperature: 0.25         # [λ]
+  noise_std: [0.08, 1.5]    # [σ_δ, σ_a] steering [rad], longitudinal [m/s²]
+  window_noise_scale: 0.7   # window candidates use noise_std times this
+  cost_position: 10.0       # [q_p]
+  cost_heading: 2.0         # [q_ψ]
+  cost_speed_shortfall: 1.0 # [q_-]
+  cost_overspeed: 1.0       # [q_+]
+  cost_drift: 0.25          # [q_y]
+  cost_arrival: 0.6         # [q_T]
+  cost_reverse: 100.0       # [q_rev]
+  seed_speed_gain: 3.0      # [g_v] 1/s
+  matched_horizon_share: 0.8  # [η]
+  collision_margin: 0.07    # [d_min] m, body corner to wall
+  window_lag: 20            # [L] waypoints
+  window_size: 5            # [S] waypoints
+  window_downstream: 10     # [D] waypoints
+  window_error_tolerance: 0.2   # [ε̄]
+  window_error_cost: 10.0       # [c_ε] steps
+  window_wall_clearance: 0.10   # [d_w] m
+  window_wall_clearance_min: 0.08  # [d_w] minimum in narrow passages, m
+  corridor_width: 0.6       # [d_off] m
+  heading_limit: 1.8        # [ψ_off] rad
+  rollback_behind: 50       # [B] waypoints
+  rollback_ahead: 5         # [F] waypoints
+  laps_without_improvement: 5   # [P] before the memory is reset / frozen

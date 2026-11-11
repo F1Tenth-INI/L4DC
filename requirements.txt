@@ -1,0 +1,10 @@
+# Tested with Python 3.11 and these versions. jax is pinned: other versions can change results in the last bits.
+jax[cpu]==0.4.38
+torch>=2.1
+numpy>=1.24,<2
+scipy>=1.10
+pandas>=2.0
+numba>=0.58
+pyyaml>=6.0
+pillow>=10.0
+pygame>=2.5
