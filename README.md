@@ -11,13 +11,28 @@ don't need the paper to use it.
 
 ## Quick start
 
+Needs Python 3.10 to 3.13 (3.11 recommended). Linux / macOS:
+
 ```bash
 git clone https://github.com/F1Tenth-INI/L4DC.git && cd L4DC
 python3.11 -m venv .venv && source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu   # optional: smaller CPU-only torch
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 python run.py
 ```
+
+Windows (cmd; Python from python.org or `winget install Python.Python.3.11`):
+
+```bat
+git clone https://github.com/F1Tenth-INI/L4DC.git && cd L4DC
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+python run.py
+```
+
+The torch line is optional: it installs the smaller CPU-only build.
 
 A window opens and Auto-Tuning MPPI drives the `icra2022` track. Every lap time is printed in the terminal,
 and at the end all lap times and crashes are saved to `results/`.

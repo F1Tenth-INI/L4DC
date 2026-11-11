@@ -24,7 +24,7 @@ def _namespace(value):
 
 
 def load_settings(path: str = SETTINGS_FILE) -> SimpleNamespace:
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         cfg = _namespace(yaml.safe_load(f))
     sim = cfg.simulation
     sim.map_dir = os.path.join(MAPS_DIR, sim.map)
@@ -49,7 +49,7 @@ class CarParameters:
     )
 
     def __init__(self, friction: float | None = None, path: str = CAR_FILE):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             for key, value in yaml.safe_load(f).items():
                 setattr(self, key, value)
         if friction is not None:

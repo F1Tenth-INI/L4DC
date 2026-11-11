@@ -186,7 +186,7 @@ class Simulation:
         os.makedirs(out_dir, exist_ok=True)
         name = f"{time.strftime('%Y-%m-%d_%H-%M-%S')}_{self.cfg.controller}_{self.sim.map}_seed{self.sim.seed}.json"
         path = os.path.join(out_dir, name)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=1)
         print(f"wrote {path}")
         return result

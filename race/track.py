@@ -42,7 +42,7 @@ class Track:
         self.map_name = map_name
         self.car_length = car_length
         self.car_width = car_width
-        with open(os.path.join(map_dir, map_name + ".yaml")) as f:
+        with open(os.path.join(map_dir, map_name + ".yaml"), encoding="utf-8") as f:
             metadata = yaml.safe_load(f)
         self.resolution = float(metadata["resolution"])
         self.origin = [float(v) for v in metadata["origin"]]
@@ -131,7 +131,7 @@ def load_waypoints(map_dir: str, map_name: str, source: str) -> np.ndarray:
     if source == "midline":
         table = _midline_table(os.path.join(map_dir, "centerline.csv"))
     else:
-        df = pd.read_csv(os.path.join(map_dir, map_name + "_wp.csv"), comment="#")
+        df = pd.read_csv(os.path.join(map_dir, map_name + "_wp.csv"), comment="#", encoding="utf-8")
         table = np.zeros((df.shape[0], 10), dtype=np.float32)
         table[:, WP_S_IDX] = df["s_m"].to_numpy()
         table[:, WP_X_IDX] = df["x_m"].to_numpy()
@@ -155,7 +155,7 @@ def load_waypoints(map_dir: str, map_name: str, source: str) -> np.ndarray:
 
 
 def _midline_table(path: str) -> np.ndarray:
-    rows = np.loadtxt(path, delimiter=",", comments="#", dtype=np.float64, ndmin=2)[:, :4]
+    rows = np.loadtxt(path, delimiter=",", comments="#", dtype=np.float64, ndmin=2, encoding="utf-8")[:, :4]
     step = np.linalg.norm(np.diff(rows[:, :2], axis=0), axis=1)
     keep = np.ones(len(rows), dtype=bool)
     keep[1:] = step > 1e-4
