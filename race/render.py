@@ -8,10 +8,12 @@ there; the orange line is the executed plan (mean prediction). MPPI shows 20 of 
 
 from __future__ import annotations
 
+import sys
 import time
 
 import numpy as np
 import pygame
+from pygame import gfxdraw
 
 from race.track import WP_X_IDX, WP_Y_IDX, get_vertices
 
@@ -25,6 +27,27 @@ NEXT_WAYPOINTS = (0, 160, 0)
 TEXT = (255, 255, 255)
 SPEED_STOPS = np.array(((0, 190, 0), (240, 220, 0), (255, 140, 0), (210, 30, 20)), dtype=np.float64)
 FPS = 60.0
+MAP_UPSAMPLE = 4  # wall image pixels per map cell
+MAP_SMOOTHING = 0.6  # [cells] blur before upsampling: rounds the steps of the grid, keeps straight walls in place
+COORD_LIMIT = 30000  # gfxdraw takes 16-bit coordinates
+
+
+def _windows_dpi_scale() -> float:
+    """On Windows, draw at the screen's real resolution instead of letting Windows stretch (blur) the window."""
+    if sys.platform != "win32":
+        return 1.0
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+        return max(1.0, ctypes.windll.user32.GetDpiForSystem() / 96.0)
+    except Exception:
+        return 1.0
+
+
+UI_SCALE = _windows_dpi_scale()
 
 NO_DISPLAY_HELP = """No display found (e.g. logged in over ssh), so no window can be shown. The run continues without it.
 To see the window: connect with X forwarding, `ssh -X user@host` (macOS needs XQuartz, Windows an X server
@@ -52,21 +75,25 @@ class Viewer:
         self.height = int(self.width / 1.5)
         self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
         pygame.display.set_caption(title)
-        self.font = pygame.font.SysFont(None, 22)
-        self.small_font = pygame.font.SysFont(None, 16)
+        self.font = pygame.font.SysFont(None, round(22 * UI_SCALE))
+        self.small_font = pygame.font.SysFont(None, round(16 * UI_SCALE))
         self.track = track
         self.follow = False
         self.dragging = False
         self.closed = False
         self._last_draw = 0.0
 
-        # Walls as an image, row 0 = lowest y. Screen rows go down, so the image is flipped back.
-        rgba = np.zeros((track.height, track.width, 4), dtype=np.uint8)
-        wall = ~track.free[::-1]
-        rgba[wall, :3] = WALL
-        rgba[wall, 3] = 255
-        self.map_surface = pygame.image.frombuffer(rgba.tobytes(), (track.width, track.height), "RGBA").convert_alpha()
-        self._scaled_map, self._scaled_zoom = None, None
+        # Walls as an image with smooth edges: the occupancy grid is blurred slightly and upsampled, and the edge
+        # is anti-aliased. Row 0 of track.free is the lowest y; image rows go down, so it is flipped.
+        from scipy.ndimage import gaussian_filter, zoom as upsample
+        wall = gaussian_filter((~track.free[::-1]).astype(np.float32), MAP_SMOOTHING)
+        wall = upsample(wall, MAP_UPSAMPLE, order=1)
+        alpha = np.clip((wall - 0.5) * 2.0 * MAP_UPSAMPLE + 0.5, 0.0, 1.0)
+        rgba = np.empty(alpha.shape + (4,), dtype=np.uint8)
+        rgba[..., :3] = WALL
+        rgba[..., 3] = np.rint(255 * alpha)
+        self.map_surface = pygame.image.frombuffer(rgba.tobytes(), alpha.shape[::-1], "RGBA").convert_alpha()
+        self._map_cache = None
         # Fit the whole map into the window.
         extent = np.array([track.width, track.height]) * track.resolution
         self.zoom = 0.9 * min(self.width / extent[0], self.height / extent[1])
@@ -109,45 +136,99 @@ class Viewer:
 
     # ------------------------------------------------------------------
     def _draw_map(self) -> None:
-        if self._scaled_zoom != self.zoom:
-            size = (max(1, int(self.track.width * self.track.resolution * self.zoom)),
-                    max(1, int(self.track.height * self.track.resolution * self.zoom)))
-            self._scaled_map = pygame.transform.smoothscale(self.map_surface, size)
-            self._scaled_zoom = self.zoom
-        top_left = self._to_screen([self.track.origin[0], self.track.origin[1] + self.track.height * self.track.resolution])[0]
-        self.screen.blit(self._scaled_map, (int(top_left[0]), int(top_left[1])))
+        """Scale only the visible part of the wall image (cached while the view does not move)."""
+        key = (self.zoom, *self.center, self.width, self.height)
+        if self._map_cache is None or self._map_cache[0] != key:
+            self._map_cache = (key, self._visible_map())
+        if self._map_cache[1] is not None:
+            surface, position = self._map_cache[1]
+            self.screen.blit(surface, position)
+
+    def _visible_map(self):
+        k = MAP_UPSAMPLE / self.track.resolution  # image pixels per m
+        ox, oy = self.track.origin[:2]
+        top = oy + self.track.height * self.track.resolution  # y of image row 0
+        left, right = self.center[0] - self.width / 2 / self.zoom, self.center[0] + self.width / 2 / self.zoom
+        high, low = self.center[1] + self.height / 2 / self.zoom, self.center[1] - self.height / 2 / self.zoom
+        w, h = self.map_surface.get_size()
+        c0, c1 = max(0, int(np.floor((left - ox) * k))), min(w, int(np.ceil((right - ox) * k)))
+        r0, r1 = max(0, int(np.floor((top - high) * k))), min(h, int(np.ceil((top - low) * k)))
+        if c1 <= c0 or r1 <= r0:
+            return None
+        x0, y0 = self._to_screen([ox + c0 / k, top - r0 / k])[0]
+        x1, y1 = self._to_screen([ox + c1 / k, top - r1 / k])[0]
+        position = (int(round(x0)), int(round(y0)))
+        size = (max(1, int(round(x1)) - position[0]), max(1, int(round(y1)) - position[1]))
+        part = self.map_surface.subsurface(pygame.Rect(c0, r0, c1 - c0, r1 - r0))
+        return pygame.transform.smoothscale(part, size), position
+
+    # Shapes are anti-aliased polygons (gfxdraw); off-screen ones are skipped.
+    def _visible(self, pts, margin: float = 20.0) -> bool:
+        return (pts[:, 0].max() >= -margin and pts[:, 0].min() < self.width + margin
+                and pts[:, 1].max() >= -margin and pts[:, 1].min() < self.height + margin)
+
+    def _polygon(self, pts, color) -> None:
+        if not self._visible(pts):
+            return
+        pts = [(int(round(x)), int(round(y))) for x, y in np.clip(pts, -COORD_LIMIT, COORD_LIMIT)]
+        gfxdraw.filled_polygon(self.screen, pts, color)
+        gfxdraw.aapolygon(self.screen, pts, color)
+
+    def _segment(self, a, b, width: float, color) -> None:
+        d = b - a
+        n = np.hypot(*d)
+        if n < 1e-6:
+            return
+        off = np.array([-d[1], d[0]]) / n * (width / 2)
+        self._polygon(np.array([a + off, b + off, b - off, a - off]), color)
 
     def _dots(self, xy, color, radius: float) -> None:
         if xy is None or len(xy) == 0:
             return
-        r = max(1, int(round(radius)))
+        r = max(1, int(round(radius * UI_SCALE)))
         for sx, sy in self._to_screen(xy):
             if -r <= sx < self.width + r and -r <= sy < self.height + r:
-                pygame.draw.circle(self.screen, color, (int(sx), int(sy)), r)
+                gfxdraw.filled_circle(self.screen, int(sx), int(sy), r, color)
+                gfxdraw.aacircle(self.screen, int(sx), int(sy), r, color)
 
-    def _line(self, xy, color, width: int) -> None:
+    def _line(self, xy, color, width: float) -> None:
         if xy is None or len(xy) < 2:
             return
-        pygame.draw.lines(self.screen, color, False, [tuple(p) for p in self._to_screen(xy)], width)
+        pts = self._to_screen(xy)
+        w = width * UI_SCALE
+        for a, b in zip(pts[:-1], pts[1:]):
+            self._segment(a, b, w, color)
+        r = int(w / 2)
+        if r >= 1:  # round joints
+            for x, y in pts[1:-1]:
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    gfxdraw.filled_circle(self.screen, int(x), int(y), r, color)
 
     def _arrows(self, xy, heading, speed, v_max) -> None:
-        length = np.abs(speed) * 0.08
-        tip = xy + np.stack((length * np.cos(heading), length * np.sin(heading)), axis=1)
-        head, wing = length * 0.35, 0.5
-        left = tip - np.stack((head * np.cos(heading - wing), head * np.sin(heading - wing)), axis=1)
-        right = tip - np.stack((head * np.cos(heading + wing), head * np.sin(heading + wing)), axis=1)
+        """One arrow per memory entry: shaft plus filled head, length 0.08 m per m/s, colored by speed."""
         scale = np.clip(np.abs(speed) / max(v_max, 1e-3), 0.0, 1.0) * (len(SPEED_STOPS) - 1)
         i = np.minimum(scale.astype(np.int64), len(SPEED_STOPS) - 2)
         colors = np.rint(SPEED_STOPS[i] + (SPEED_STOPS[i + 1] - SPEED_STOPS[i]) * (scale - i)[:, None]).astype(int)
-        points = self._to_screen(np.stack((xy, tip, left, tip, right), axis=1).reshape(-1, 2)).reshape(-1, 5, 2)
-        for pts, color in zip(points, colors):
-            pygame.draw.lines(self.screen, tuple(color), False, [tuple(p) for p in pts], 2)
+        base = self._to_screen(xy)
+        direction = np.stack((np.cos(heading), -np.sin(heading)), axis=1)  # screen y points down
+        length = np.abs(speed) * 0.08 * self.zoom  # px
+        shaft_w = float(np.clip(0.012 * self.zoom, 1.2, 4.0)) * UI_SCALE
+        for b, d, l, color in zip(base, direction, length, colors):
+            if l < 1.0:
+                continue
+            color = tuple(int(c) for c in color)
+            head = min(0.4 * l, max(4.0 * shaft_w, 0.25 * l))
+            tip = b + d * l
+            neck = tip - d * head
+            normal = np.array([-d[1], d[0]])
+            self._segment(b, neck + d * 0.5, shaft_w, color)
+            self._polygon(np.array([tip, neck + normal * head * 0.45, neck - normal * head * 0.45]), color)
 
     def _car(self, state) -> None:
         from race.state import POSE_THETA_IDX, POSE_X_IDX, POSE_Y_IDX
         pose = np.array([state[POSE_X_IDX], state[POSE_Y_IDX], state[POSE_THETA_IDX]], dtype=np.float64)
         corners = get_vertices(pose, self.track.car_length, self.track.car_width)
-        pygame.draw.polygon(self.screen, CAR, [tuple(p) for p in self._to_screen(corners)])
+        self._polygon(self._to_screen(corners), CAR)
 
     def _text(self, lines, x, y, font=None) -> None:
         font = font or self.font
@@ -182,7 +263,7 @@ class Viewer:
             count_xy, counts = layers["counts"]
             for (sx, sy), c in zip(self._to_screen(count_xy), counts):
                 if c > 0:
-                    self.screen.blit(self.small_font.render(str(int(c)), True, TEXT), (int(sx) + 3, int(sy) - 12))
+                    self.screen.blit(self.small_font.render(str(int(c)), True, TEXT), (int(sx) + 3, int(sy) - self.small_font.get_linesize()))
         else:
             self._dots(self.track.waypoints[:, [WP_X_IDX, WP_Y_IDX]], WAYPOINTS, 2)
             self._dots(layers.get("next_waypoints"), NEXT_WAYPOINTS, 2.5)
@@ -199,7 +280,8 @@ class Viewer:
             f"crashes {info['crashes']}" + ("   memory frozen" if layers.get("frozen") else ""),
         ]
         self._text(lines, 10, 8)
-        self._text(["wheel: zoom   drag: pan   F: follow car   Esc: quit"], 10, self.height - 20, self.small_font)
+        self._text(["wheel: zoom   drag: pan   F: follow car   Esc: quit"], 10,
+                   self.height - self.small_font.get_linesize() - 6, self.small_font)
         pygame.display.flip()
 
     def close(self) -> None:
