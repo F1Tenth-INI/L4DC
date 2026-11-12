@@ -9,6 +9,14 @@ A small simulator for a 1:10 scale race car (F1TENTH), with two controllers that
 This is the code of the paper *Auto-Tuning MPPI for Autonomous Racing* (Bolli, Ferraro, Delbrück), but you
 don't need the paper to use it.
 
+<p align="center">
+  <a href="https://drive.google.com/file/d/19B7TOOUZ8hUSUKSmJKOXAdQ0VYC9TvpC/view?usp=sharing">
+    <img src="media/atmppi_video.gif" width="520" alt="How Auto-Tuning MPPI works: simulation explainer and the physical car">
+  </a>
+  <br>
+  <em>How Auto-Tuning MPPI works (67 s). Click for the full-quality video.</em>
+</p>
+
 ## Quick start
 
 Needs Python 3.10 to 3.13 (3.11 recommended). Linux / macOS:
